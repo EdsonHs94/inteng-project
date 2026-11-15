@@ -27,6 +27,12 @@ BUILD_TARGET=development docker compose run --rm --no-deps inventory-service pyt
 La prueba recorre `upgrade head → downgrade base → upgrade head`, compara el
 esquema con la metadata y comprueba que una tabla ajena sobreviva al downgrade.
 
+Los casos de productos e inventario verifican commit y lectura desde otra sesión,
+UUID generados por los modelos, cantidades cero y positivas y referencia nullable.
+También comprueban las causas PostgreSQL de errores por claves duplicadas, SKU
+duplicado, campos obligatorios nulos, producto inexistente y cantidad negativa,
+con rollback después de cada operación rechazada.
+
 ## Migraciones de la aplicación
 
 La imagen runtime incluye Alembic y las migraciones. Con PostgreSQL disponible:

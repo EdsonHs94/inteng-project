@@ -45,3 +45,13 @@ docker compose run --rm --no-deps inventory-service alembic current
 Se reutilizan las variables `POSTGRES_*` existentes. Las migraciones no se ejecutan
 automáticamente al arrancar FastAPI. El rollback explícito es `alembic downgrade
 base`: elimina ambas tablas y sus datos; respaldar los datos antes de usarlo.
+
+La revisión `0002` se aplica sobre `0001` con `alembic upgrade head` y agrega
+reservas sin modificar productos ni inventarios. `alembic downgrade 0001` elimina
+la tabla de reservas y todos sus datos, pero conserva productos e inventarios;
+respaldar las reservas antes de revertir. Las pruebas ejercitan esta secuencia
+con datos previos y vuelven a aplicar la revisión.
+
+Los timestamps de reservas se generan en Python al insertar mediante el ORM;
+`updated_at` se renueva al modificar mediante el ORM. SQL directo debe aportar
+ambos valores y no actualiza `updated_at` automáticamente.

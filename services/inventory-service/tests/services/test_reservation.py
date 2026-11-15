@@ -5,14 +5,14 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.models import Inventory, InventoryReservation
-from app.repositories import inventory_reservation
-from app.repositories.reservation_uow import SqlAlchemyReservationUnitOfWork
-from app.services.reservation import (
+from app.repositories.reservation_repository import SqlAlchemyReservationRepository
+from app.repositories.unit_of_work import SqlAlchemyInventoryUnitOfWork
+from app.services.exceptions import (
     DuplicateReservation,
     InsufficientStock,
     InventoryNotFound,
-    reserve,
 )
+from app.services.reservation_service import ReservationService
 
 
 def seed(engine: Engine, quantity: int) -> object:
@@ -34,8 +34,8 @@ def state(engine: Engine, inventory_id: object) -> tuple[int, int]:
 def test_success(migrated_engine: Engine, quantity: int) -> None:
     inventory_id = seed(migrated_engine, 5)
     with Session(migrated_engine) as session:
-        result = reserve(
-            SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, quantity
+        result = ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            uuid4(), inventory_id, quantity
         )
     assert result.status == "RESERVED"
     assert state(migrated_engine, inventory_id) == (5 - quantity, 1)
@@ -45,18 +45,26 @@ def test_success(migrated_engine: Engine, quantity: int) -> None:
 def test_insufficient(migrated_engine: Engine, available: int) -> None:
     inventory_id = seed(migrated_engine, available)
     with Session(migrated_engine) as session, pytest.raises(InsufficientStock):
-        reserve(SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            uuid4(), inventory_id, 2
+        )
     assert state(migrated_engine, inventory_id) == (available, 0)
 
 
 def test_missing_and_duplicate(migrated_engine: Engine) -> None:
     inventory_id, order_id = seed(migrated_engine, 5), uuid4()
     with Session(migrated_engine) as session, pytest.raises(InventoryNotFound):
-        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, uuid4(), 1)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            order_id, uuid4(), 1
+        )
     with Session(migrated_engine) as session:
-        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            order_id, inventory_id, 2
+        )
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 1)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            order_id, inventory_id, 1
+        )
     assert state(migrated_engine, inventory_id) == (3, 1)
 
 
@@ -65,7 +73,8 @@ def test_failure_after_flushed_discount_rolls_back(
 ) -> None:
     inventory_id = seed(migrated_engine, 5)
 
-    def fail(session: Session, reservation: InventoryReservation) -> None:
+    def fail(self, *args) -> None:
+        session = self.session
         assert (
             session.scalar(
                 select(Inventory.quantity_available).where(Inventory.id == inventory_id)
@@ -74,9 +83,11 @@ def test_failure_after_flushed_discount_rolls_back(
         )
         raise RuntimeError("controlled failure")
 
-    monkeypatch.setattr(inventory_reservation, "add", fail)
+    monkeypatch.setattr(SqlAlchemyReservationRepository, "create_reservation", fail)
     with Session(migrated_engine) as session, pytest.raises(RuntimeError):
-        reserve(SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            uuid4(), inventory_id, 2
+        )
     assert state(migrated_engine, inventory_id) == (5, 0)
 
 
@@ -94,9 +105,13 @@ def test_unique_violation_translated_after_rollback(
             )
         )
         session.commit()
-    monkeypatch.setattr(inventory_reservation, "find_by_pair", lambda *args: None)
+    monkeypatch.setattr(
+        SqlAlchemyReservationRepository, "has_reservation", lambda *args: False
+    )
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            order_id, inventory_id, 2
+        )
     assert state(migrated_engine, inventory_id) == (5, 1)
 
 
@@ -106,15 +121,16 @@ def test_other_integrity_error_is_not_duplicate(
     from sqlalchemy.exc import IntegrityError
 
     inventory_id = seed(migrated_engine, 5)
-    original = inventory_reservation.add
+    original = SqlAlchemyReservationRepository.create_reservation
 
-    def invalid(session, reservation):
-        reservation.quantity = 0
-        original(session, reservation)
+    def invalid(self, order_id, inventory_id, quantity, status):
+        original(self, order_id, inventory_id, 0, status)
 
-    monkeypatch.setattr(inventory_reservation, "add", invalid)
+    monkeypatch.setattr(SqlAlchemyReservationRepository, "create_reservation", invalid)
     with Session(migrated_engine) as session, pytest.raises(IntegrityError):
-        reserve(SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            uuid4(), inventory_id, 2
+        )
     assert state(migrated_engine, inventory_id) == (5, 0)
 
 
@@ -131,7 +147,9 @@ def test_existing_other_status_is_duplicate(migrated_engine: Engine) -> None:
         )
         session.commit()
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            order_id, inventory_id, 2
+        )
     assert state(migrated_engine, inventory_id) == (5, 1)
 
 
@@ -159,7 +177,38 @@ def test_deferred_unique_violation_at_commit_rolls_back(
             )
         )
         session.commit()
-    monkeypatch.setattr(inventory_reservation, "find_by_pair", lambda *args: None)
+    monkeypatch.setattr(
+        SqlAlchemyReservationRepository, "has_reservation", lambda *args: False
+    )
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            order_id, inventory_id, 2
+        )
     assert state(migrated_engine, inventory_id) == (5, 1)
+
+
+def test_result_serializes_after_commit_without_queries(
+    migrated_engine: Engine,
+) -> None:
+    from sqlalchemy import event
+
+    from app.schemas.reservation import ReservationResponse
+
+    inventory_id = seed(migrated_engine, 5)
+    statements = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(migrated_engine, "before_cursor_execute", capture)
+    try:
+        with Session(migrated_engine) as session:
+            result = ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+                uuid4(), inventory_id, 2
+            )
+            count = len(statements)
+            response = ReservationResponse.model_validate(result, from_attributes=True)
+            assert len(statements) == count
+        assert response.status == "RESERVED" and response.quantity == 2
+    finally:
+        event.remove(migrated_engine, "before_cursor_execute", capture)

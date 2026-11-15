@@ -18,3 +18,12 @@ pair and stock, and commits the discount and reservation together. A failed
 transaction rolls both back. Repeating a request is not idempotent: the same pair
 returns 409, including when the existing reservation has another status. Release,
 confirmation, and automatic retries are not provided by this operation.
+
+`ReservationService` owns the business sequence and opens the transaction through
+the `InventoryUnitOfWork` contract. The SQLAlchemy unit of work supplies inventory
+and reservation repositories sharing one session and handles commit and rollback;
+the repositories do not commit. The API dependency composes these components.
+The returned object is the existing ORM entity, exposed to the service through a
+read-only structural contract rather than a separate DTO. The unit of work sets
+`expire_on_commit=False`, and the repository flushes the reservation before commit so response
+fields can be serialized afterward without a refresh or implicit query.

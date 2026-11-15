@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_session
 from app.main import app
 from app.models import Inventory, InventoryReservation
-from app.repositories import inventory_reservation
+from app.repositories.reservation_repository import SqlAlchemyReservationRepository
 
 
 @pytest.fixture
@@ -100,10 +100,10 @@ def test_invalid(setup_api, migrated_engine: Engine, change: dict):
 def test_unexpected_failure_rolls_back_and_hides_details(
     setup_api, migrated_engine: Engine, monkeypatch
 ):
-    def fail(session, reservation):
+    def fail(self, *args):
         raise RuntimeError("secret SQL details")
 
-    monkeypatch.setattr(inventory_reservation, "add", fail)
+    monkeypatch.setattr(SqlAlchemyReservationRepository, "create_reservation", fail)
     response = request(
         {"order_id": str(uuid4()), "inventory_id": str(setup_api), "quantity": 2}
     )
@@ -158,3 +158,37 @@ def test_concurrent_requests(
         app.dependency_overrides[get_session] = original
     assert sorted(r.status_code for r in responses) == [201, 409]
     assert snapshot(migrated_engine, inventory_id) == (4 if same_order else 0, 1)
+
+
+def test_service_dependency_can_be_replaced():
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from app.api.dependencies import get_reservation_service
+
+    inventory_id, order_id = uuid4(), uuid4()
+
+    class StubService:
+        def reserve(self, order, inventory, quantity):
+            return SimpleNamespace(
+                id=uuid4(),
+                order_id=order,
+                inventory_id=inventory,
+                quantity=quantity,
+                status="RESERVED",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+
+    app.dependency_overrides[get_reservation_service] = lambda: StubService()
+    try:
+        response = request(
+            {
+                "order_id": str(order_id),
+                "inventory_id": str(inventory_id),
+                "quantity": 2,
+            }
+        )
+        assert response.status_code == 201 and response.json()["quantity"] == 2
+    finally:
+        app.dependency_overrides.pop(get_reservation_service, None)

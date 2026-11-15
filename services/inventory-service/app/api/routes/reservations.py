@@ -1,17 +1,15 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
-from app.core.database import get_session
-from app.repositories.reservation_uow import SqlAlchemyReservationUnitOfWork
+from app.api.dependencies import get_reservation_service
 from app.schemas.reservation import ReservationRequest, ReservationResponse
-from app.services.reservation import (
+from app.services.exceptions import (
     DuplicateReservation,
     InsufficientStock,
     InventoryNotFound,
-    reserve,
 )
+from app.services.reservation_service import ReservationService
 
 router = APIRouter()
 
@@ -22,14 +20,12 @@ router = APIRouter()
     response_model=ReservationResponse,
 )
 def create_reservation(
-    payload: ReservationRequest, session: Annotated[Session, Depends(get_session)]
+    payload: ReservationRequest,
+    service: Annotated[ReservationService, Depends(get_reservation_service)],
 ) -> ReservationResponse:
     try:
-        result = reserve(
-            SqlAlchemyReservationUnitOfWork(session),
-            payload.order_id,
-            payload.inventory_id,
-            payload.quantity,
+        result = service.reserve(
+            payload.order_id, payload.inventory_id, payload.quantity
         )
     except InventoryNotFound as exc:
         raise HTTPException(status_code=404, detail="Inventory not found") from exc

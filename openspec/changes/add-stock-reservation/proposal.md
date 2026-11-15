@@ -7,7 +7,7 @@ El servicio ya almacena inventarios y reservas, pero todavía no ofrece una oper
 ## What Changes
 
 - Incorporar `POST /reservations` con request/response Pydantic y respuesta 201 con la reserva creada en estado `RESERVED`.
-- Añadir servicio transaccional dependiente de contratos de aplicación, adaptador de unidad de trabajo y repositorios para verificar inventario, detectar duplicados, comprobar disponibilidad, descontar stock y persistir la reserva.
+- Añadir `ReservationService` con contratos de aplicación, unidad de trabajo y repositorios de persistencia como clases para verificar inventario, detectar duplicados, comprobar disponibilidad, descontar stock y persistir la reserva.
 - Responder 404 para inventario inexistente, 409 para stock insuficiente o reserva existente, y 422 para solicitudes inválidas.
 - Garantizar commit conjunto o rollback completo, evitando stock negativo ante solicitudes simultáneas.
 - Verificar los casos HTTP y de negocio sobre PostgreSQL real, incluyendo rollback y una comprobación concurrente acotada.

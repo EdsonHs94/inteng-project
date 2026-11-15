@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_session
+from app.repositories.reservation_uow import SqlAlchemyReservationUnitOfWork
 from app.schemas.reservation import ReservationRequest, ReservationResponse
 from app.services.reservation import (
     DuplicateReservation,
@@ -25,7 +26,10 @@ def create_reservation(
 ) -> ReservationResponse:
     try:
         result = reserve(
-            session, payload.order_id, payload.inventory_id, payload.quantity
+            SqlAlchemyReservationUnitOfWork(session),
+            payload.order_id,
+            payload.inventory_id,
+            payload.quantity,
         )
     except InventoryNotFound as exc:
         raise HTTPException(status_code=404, detail="Inventory not found") from exc

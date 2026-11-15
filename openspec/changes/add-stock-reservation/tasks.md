@@ -8,7 +8,7 @@ Tres entregas incrementales y revisables por separado, limitadas a `services/inv
 
 ## 2. Servicio transaccional
 
-- [x] 2.1 Implementar servicio con una sesión/transacción, errores de negocio y resultado inmutable: bloquear inventario, validar existencia/duplicado/stock, descontar, crear RESERVED y confirmar; clasificar únicamente la UNIQUE esperada después del rollback. Añadir pruebas PostgreSQL de éxito, stock exacto e insuficiente, inventario inexistente, duplicado sin nuevo descuento y fallo controlado después de un descuento escrito, verificando estado desde otra sesión. Documentar la responsabilidad transaccional y ejecutar pruebas del servicio, suite existente, Ruff y formato. Requiere 1.1.
+- [x] 2.1 Implementar servicio con contratos de aplicación y unidad de trabajo transaccional inyectada, errores de negocio y resultado inmutable: bloquear inventario, validar existencia/duplicado/stock, descontar, crear RESERVED y confirmar; clasificar en persistencia únicamente la UNIQUE esperada después del rollback, incluso al confirmar. Probar las reglas con implementaciones ligeras sin base de datos. Añadir pruebas PostgreSQL de éxito, stock exacto e insuficiente, inventario inexistente, duplicado sin nuevo descuento y fallo controlado después de un descuento escrito, verificando estado desde otra sesión. Documentar la responsabilidad transaccional y ejecutar pruebas del servicio, suite existente, Ruff y formato. Requiere 1.1.
 
 ## 3. Endpoint e integración
 

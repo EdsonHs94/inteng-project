@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Inventory, InventoryReservation
 from app.repositories import inventory_reservation
+from app.repositories.reservation_uow import SqlAlchemyReservationUnitOfWork
 from app.services.reservation import (
     DuplicateReservation,
     InsufficientStock,
@@ -33,7 +34,9 @@ def state(engine: Engine, inventory_id: object) -> tuple[int, int]:
 def test_success(migrated_engine: Engine, quantity: int) -> None:
     inventory_id = seed(migrated_engine, 5)
     with Session(migrated_engine) as session:
-        result = reserve(session, uuid4(), inventory_id, quantity)
+        result = reserve(
+            SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, quantity
+        )
     assert result.status == "RESERVED"
     assert state(migrated_engine, inventory_id) == (5 - quantity, 1)
 
@@ -42,18 +45,18 @@ def test_success(migrated_engine: Engine, quantity: int) -> None:
 def test_insufficient(migrated_engine: Engine, available: int) -> None:
     inventory_id = seed(migrated_engine, available)
     with Session(migrated_engine) as session, pytest.raises(InsufficientStock):
-        reserve(session, uuid4(), inventory_id, 2)
+        reserve(SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, 2)
     assert state(migrated_engine, inventory_id) == (available, 0)
 
 
 def test_missing_and_duplicate(migrated_engine: Engine) -> None:
     inventory_id, order_id = seed(migrated_engine, 5), uuid4()
     with Session(migrated_engine) as session, pytest.raises(InventoryNotFound):
-        reserve(session, order_id, uuid4(), 1)
+        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, uuid4(), 1)
     with Session(migrated_engine) as session:
-        reserve(session, order_id, inventory_id, 2)
+        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(session, order_id, inventory_id, 1)
+        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 1)
     assert state(migrated_engine, inventory_id) == (3, 1)
 
 
@@ -73,7 +76,7 @@ def test_failure_after_flushed_discount_rolls_back(
 
     monkeypatch.setattr(inventory_reservation, "add", fail)
     with Session(migrated_engine) as session, pytest.raises(RuntimeError):
-        reserve(session, uuid4(), inventory_id, 2)
+        reserve(SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, 2)
     assert state(migrated_engine, inventory_id) == (5, 0)
 
 
@@ -93,7 +96,7 @@ def test_unique_violation_translated_after_rollback(
         session.commit()
     monkeypatch.setattr(inventory_reservation, "find_by_pair", lambda *args: None)
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(session, order_id, inventory_id, 2)
+        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
     assert state(migrated_engine, inventory_id) == (5, 1)
 
 
@@ -111,7 +114,7 @@ def test_other_integrity_error_is_not_duplicate(
 
     monkeypatch.setattr(inventory_reservation, "add", invalid)
     with Session(migrated_engine) as session, pytest.raises(IntegrityError):
-        reserve(session, uuid4(), inventory_id, 2)
+        reserve(SqlAlchemyReservationUnitOfWork(session), uuid4(), inventory_id, 2)
     assert state(migrated_engine, inventory_id) == (5, 0)
 
 
@@ -128,5 +131,35 @@ def test_existing_other_status_is_duplicate(migrated_engine: Engine) -> None:
         )
         session.commit()
     with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
-        reserve(session, order_id, inventory_id, 2)
+        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
+    assert state(migrated_engine, inventory_id) == (5, 1)
+
+
+def test_deferred_unique_violation_at_commit_rolls_back(
+    migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inventory_id, order_id = seed(migrated_engine, 5), uuid4()
+    with migrated_engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE inventory_reservations DROP CONSTRAINT "
+            "uq_inventory_reservations_order_inventory"
+        )
+        connection.exec_driver_sql(
+            "ALTER TABLE inventory_reservations ADD CONSTRAINT "
+            "uq_inventory_reservations_order_inventory "
+            "UNIQUE (order_id, inventory_id) DEFERRABLE INITIALLY DEFERRED"
+        )
+    with Session(migrated_engine) as session:
+        session.add(
+            InventoryReservation(
+                order_id=order_id,
+                inventory_id=inventory_id,
+                quantity=1,
+                status="RELEASED",
+            )
+        )
+        session.commit()
+    monkeypatch.setattr(inventory_reservation, "find_by_pair", lambda *args: None)
+    with Session(migrated_engine) as session, pytest.raises(DuplicateReservation):
+        reserve(SqlAlchemyReservationUnitOfWork(session), order_id, inventory_id, 2)
     assert state(migrated_engine, inventory_id) == (5, 1)

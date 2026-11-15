@@ -35,4 +35,4 @@ def create_reservation(
         ) from exc
     except InsufficientStock as exc:
         raise HTTPException(status_code=409, detail="Insufficient stock") from exc
-    return ReservationResponse.model_validate(result, from_attributes=True)
+    return result

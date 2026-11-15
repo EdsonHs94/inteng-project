@@ -206,9 +206,43 @@ def test_result_serializes_after_commit_without_queries(
             result = ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
                 uuid4(), inventory_id, 2
             )
+            assert isinstance(result, ReservationResponse)
             count = len(statements)
-            response = ReservationResponse.model_validate(result, from_attributes=True)
+            response = result.model_dump(mode="json")
             assert len(statements) == count
-        assert response.status == "RESERVED" and response.quantity == 2
+        assert response["status"] == "RESERVED" and response["quantity"] == 2
     finally:
         event.remove(migrated_engine, "before_cursor_execute", capture)
+
+
+def test_result_validation_error_rolls_back_flushed_writes(
+    migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import inspect
+
+    from app.schemas.reservation import ReservationResponse
+
+    inventory_id = seed(migrated_engine, 5)
+
+    def fail(cls, row, **kwargs):
+        session = inspect(row).session
+        assert (
+            session.scalar(
+                select(Inventory.quantity_available).where(Inventory.id == inventory_id)
+            )
+            == 3
+        )
+        assert (
+            session.scalar(select(func.count()).select_from(InventoryReservation)) == 1
+        )
+        raise ValueError("invalid response")
+
+    monkeypatch.setattr(ReservationResponse, "model_validate", classmethod(fail))
+    with (
+        Session(migrated_engine) as session,
+        pytest.raises(ValueError, match="invalid response"),
+    ):
+        ReservationService(SqlAlchemyInventoryUnitOfWork(session)).reserve(
+            uuid4(), inventory_id, 2
+        )
+    assert state(migrated_engine, inventory_id) == (5, 0)

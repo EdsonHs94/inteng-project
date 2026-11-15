@@ -1,24 +1,8 @@
 from contextlib import AbstractContextManager
-from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-
-class ReservationView(Protocol):
-    @property
-    def id(self) -> UUID: ...
-    @property
-    def order_id(self) -> UUID: ...
-    @property
-    def inventory_id(self) -> UUID: ...
-    @property
-    def quantity(self) -> int: ...
-    @property
-    def status(self) -> str: ...
-    @property
-    def created_at(self) -> datetime: ...
-    @property
-    def updated_at(self) -> datetime: ...
+from app.schemas.reservation import ReservationResponse
 
 
 class InventoryRepository(Protocol):
@@ -30,7 +14,7 @@ class ReservationRepository(Protocol):
     def has_reservation(self, order_id: UUID, inventory_id: UUID) -> bool: ...
     def create_reservation(
         self, order_id: UUID, inventory_id: UUID, quantity: int, status: str
-    ) -> ReservationView: ...
+    ) -> ReservationResponse: ...
 
 
 class InventoryUnitOfWork(Protocol):

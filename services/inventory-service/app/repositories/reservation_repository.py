@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import InventoryReservation
+from app.schemas.reservation import ReservationResponse
 
 
 class SqlAlchemyReservationRepository:
@@ -23,7 +24,7 @@ class SqlAlchemyReservationRepository:
 
     def create_reservation(
         self, order_id: UUID, inventory_id: UUID, quantity: int, status: str
-    ) -> InventoryReservation:
+    ) -> ReservationResponse:
         row = InventoryReservation(
             order_id=order_id,
             inventory_id=inventory_id,
@@ -32,4 +33,4 @@ class SqlAlchemyReservationRepository:
         )
         self.session.add(row)
         self.session.flush()
-        return row
+        return ReservationResponse.model_validate(row, from_attributes=True)

@@ -23,7 +23,8 @@ confirmation, and automatic retries are not provided by this operation.
 the `InventoryUnitOfWork` contract. The SQLAlchemy unit of work supplies inventory
 and reservation repositories sharing one session and handles commit and rollback;
 the repositories do not commit. The API dependency composes these components.
-The returned object is the existing ORM entity, exposed to the service through a
-read-only structural contract rather than a separate DTO. The unit of work sets
-`expire_on_commit=False`, and the repository flushes the reservation before commit so response
-fields can be serialized afterward without a refresh or implicit query.
+The repository builds the shared `ReservationResponse` Pydantic model from the
+flushed ORM entity inside the transaction, before commit. The service returns
+that model only after commit succeeds; response serialization requires no ORM
+refresh or implicit query. A validation failure rolls back both writes. The
+application deliberately depends on this shared Pydantic model.

@@ -12,7 +12,6 @@ from app.services.exceptions import DuplicateReservation
 class SqlAlchemyInventoryUnitOfWork:
     def __init__(self, session: Session):
         self.session = session
-        self.session.expire_on_commit = False
         self.inventories = SqlAlchemyInventoryRepository(session)
         self.reservations = SqlAlchemyReservationRepository(session)
 

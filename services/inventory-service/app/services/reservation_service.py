@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from app.services.contracts import InventoryUnitOfWork, ReservationView
+from app.schemas.reservation import ReservationResponse
+from app.services.contracts import InventoryUnitOfWork
 from app.services.exceptions import (
     DuplicateReservation,
     InsufficientStock,
@@ -14,7 +15,7 @@ class ReservationService:
 
     def reserve(
         self, order_id: UUID, inventory_id: UUID, quantity: int
-    ) -> ReservationView:
+    ) -> ReservationResponse:
         if quantity <= 0:
             raise ValueError("quantity must be positive")
         with self.uow.begin():

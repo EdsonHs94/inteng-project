@@ -162,15 +162,15 @@ def test_concurrent_requests(
 
 def test_service_dependency_can_be_replaced():
     from datetime import UTC, datetime
-    from types import SimpleNamespace
 
     from app.api.dependencies import get_reservation_service
+    from app.schemas.reservation import ReservationResponse
 
     inventory_id, order_id = uuid4(), uuid4()
 
     class StubService:
         def reserve(self, order, inventory, quantity):
-            return SimpleNamespace(
+            return ReservationResponse(
                 id=uuid4(),
                 order_id=order,
                 inventory_id=inventory,

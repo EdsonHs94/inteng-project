@@ -1,10 +1,10 @@
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+from app.schemas.reservation import ReservationResponse
 from app.services.exceptions import (
     DuplicateReservation,
     InsufficientStock,
@@ -46,7 +46,7 @@ class MemoryUnitOfWork:
         if self.fail:
             raise RuntimeError("write failure")
         now = datetime.now(UTC)
-        result = SimpleNamespace(
+        result = ReservationResponse(
             id=uuid4(),
             order_id=order_id,
             inventory_id=inventory_id,

@@ -10,12 +10,16 @@ COPY pyproject.toml uv.lock ./
 FROM base AS development
 RUN uv sync --locked
 COPY app ./app
+COPY alembic.ini ./
+COPY alembic ./alembic
 COPY tests ./tests
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS runtime
 RUN uv sync --locked --no-dev
 COPY app ./app
+COPY alembic.ini ./
+COPY alembic ./alembic
 RUN useradd --create-home appuser
 USER appuser
 EXPOSE 8000

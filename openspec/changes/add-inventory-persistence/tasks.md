@@ -8,7 +8,7 @@ Las tareas se ejecutan en orden; cada una entrega un cambio acotado y revisable 
 
 ## 2. Migración inicial
 
-- [ ] 2.1 Configurar Alembic reutilizando `Settings.database_url`, registrar la metadata y añadir revisión inicial reversible; copiar los artefactos de Alembic en las etapas existentes del Dockerfile. Añadir fixture para una base PostgreSQL de pruebas dedicada y prueba de `upgrade head → downgrade base → upgrade head` que compruebe tablas y restricciones, rechazando la base de aplicación como destino destructivo. Documentar preparación y comandos en `tests/persistence/README.md`; verificar la prueba mediante la imagen de desarrollo en Compose y ejecutar Ruff y formato. Requiere 1.1.
+- [x] 2.1 Configurar Alembic reutilizando `Settings.database_url`, registrar la metadata y añadir revisión inicial reversible; copiar los artefactos de Alembic en las etapas existentes del Dockerfile. Añadir fixture para una base PostgreSQL de pruebas dedicada y prueba de `upgrade head → downgrade base → upgrade head` que compruebe tablas y restricciones, rechazando la base de aplicación como destino destructivo. Documentar preparación y comandos en `tests/persistence/README.md`; verificar la prueba mediante la imagen de desarrollo en Compose y ejecutar Ruff y formato. Requiere 1.1.
 
 ## 3. Persistencia y restricciones
 

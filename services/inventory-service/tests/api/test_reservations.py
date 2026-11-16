@@ -67,7 +67,9 @@ def test_http_success_and_conflicts(setup_api, migrated_engine: Engine):
         "updated_at",
     }
     assert data["status"] == "RESERVED" and data["quantity"] == 3
-    assert request(payload).status_code == 409
+    replay = request(payload)
+    assert replay.status_code == 200
+    assert replay.json() == data
     assert (
         request({**payload, "order_id": str(uuid4()), "quantity": 3}).status_code == 409
     )
@@ -103,7 +105,7 @@ def test_unexpected_failure_rolls_back_and_hides_details(
     def fail(self, *args):
         raise RuntimeError("secret SQL details")
 
-    monkeypatch.setattr(SqlAlchemyReservationRepository, "create_reservation", fail)
+    monkeypatch.setattr(SqlAlchemyReservationRepository, "try_create_reservation", fail)
     response = request(
         {"order_id": str(uuid4()), "inventory_id": str(setup_api), "quantity": 2}
     )
@@ -156,7 +158,11 @@ def test_concurrent_requests(
         responses = asyncio.run(run())
     finally:
         app.dependency_overrides[get_session] = original
-    assert sorted(r.status_code for r in responses) == [201, 409]
+    assert sorted(r.status_code for r in responses) == (
+        [200, 201] if same_order else [201, 409]
+    )
+    if same_order:
+        assert responses[0].json() == responses[1].json()
     assert snapshot(migrated_engine, inventory_id) == (4 if same_order else 0, 1)
 
 
@@ -178,7 +184,7 @@ def test_service_dependency_can_be_replaced():
                 status="RESERVED",
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
-            )
+            ), True
 
     app.dependency_overrides[get_reservation_service] = lambda: StubService()
     try:
@@ -192,3 +198,86 @@ def test_service_dependency_can_be_replaced():
         assert response.status_code == 201 and response.json()["quantity"] == 2
     finally:
         app.dependency_overrides.pop(get_reservation_service, None)
+
+
+@pytest.mark.parametrize("quantity", [3, 5])
+def test_repeated_identical_requests_preserve_original(
+    setup_api, migrated_engine: Engine, quantity: int
+):
+    payload = {
+        "order_id": str(uuid4()),
+        "inventory_id": str(setup_api),
+        "quantity": quantity,
+    }
+    initial = request(payload)
+    assert initial.status_code == 201
+    for _ in range(3):
+        replay = request(payload)
+        assert replay.status_code == 200
+        assert replay.json() == initial.json()
+        assert snapshot(migrated_engine, setup_api) == (5 - quantity, 1)
+    with Session(migrated_engine) as session:
+        row = session.scalar(select(InventoryReservation))
+        assert str(row.id) == initial.json()["id"]
+        assert row.quantity == quantity and row.status == "RESERVED"
+
+
+@pytest.mark.parametrize("quantity", [1, 4])
+def test_changed_quantity_is_conflict_even_when_stock_is_zero(
+    setup_api, migrated_engine: Engine, quantity: int
+):
+    payload = {
+        "order_id": str(uuid4()),
+        "inventory_id": str(setup_api),
+        "quantity": 5,
+    }
+    initial = request(payload)
+    assert initial.status_code == 201
+    assert request({**payload, "quantity": quantity}).status_code == 409
+    replay = request(payload)
+    assert replay.status_code == 200 and replay.json() == initial.json()
+    assert snapshot(migrated_engine, setup_api) == (0, 1)
+
+
+@pytest.mark.parametrize("reservation_status", ["RELEASED", "CONFIRMED"])
+@pytest.mark.parametrize("quantity", [2, 3])
+def test_other_status_is_never_reactivated(
+    setup_api, migrated_engine: Engine, reservation_status: str, quantity: int
+):
+    from app.schemas.reservation import ReservationResponse
+
+    order_id = uuid4()
+    with Session(migrated_engine) as session:
+        session.get(Inventory, setup_api).quantity_available = 0
+        row = InventoryReservation(
+            order_id=order_id,
+            inventory_id=setup_api,
+            quantity=2,
+            status=reservation_status,
+        )
+        session.add(row)
+        session.flush()
+        original = ReservationResponse.model_validate(row, from_attributes=True)
+        session.commit()
+    assert (
+        request(
+            {
+                "order_id": str(order_id),
+                "inventory_id": str(setup_api),
+                "quantity": quantity,
+            }
+        ).status_code
+        == 409
+    )
+    with Session(migrated_engine) as session:
+        row = session.get(InventoryReservation, original.id)
+        assert ReservationResponse.model_validate(row, from_attributes=True) == original
+    assert snapshot(migrated_engine, setup_api) == (0, 1)
+
+
+def test_openapi_documents_creation_and_replay():
+    responses = app.openapi()["paths"]["/reservations"]["post"]["responses"]
+    assert (
+        responses["200"]["content"]["application/json"]["schema"]
+        == responses["201"]["content"]["application/json"]["schema"]
+    )

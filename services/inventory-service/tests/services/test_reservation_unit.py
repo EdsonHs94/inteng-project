@@ -36,13 +36,15 @@ class MemoryUnitOfWork:
     def get_quantity_for_update(self, inventory_id):
         return self.quantity
 
-    def has_reservation(self, order_id, inventory_id):
-        return (order_id, inventory_id) in self.records
+    def get_by_pair(self, order_id, inventory_id):
+        return self.records.get((order_id, inventory_id))
 
     def set_quantity(self, inventory_id, quantity):
         self.quantity = quantity
 
-    def create_reservation(self, order_id, inventory_id, quantity, status):
+    def try_create_reservation(self, order_id, inventory_id, quantity, status):
+        if (order_id, inventory_id) in self.records:
+            return None
         if self.fail:
             raise RuntimeError("write failure")
         now = datetime.now(UTC)
@@ -61,7 +63,10 @@ class MemoryUnitOfWork:
 
 def test_rules_and_rollback_with_memory_unit_of_work():
     uow, order_id, inventory_id = MemoryUnitOfWork(), uuid4(), uuid4()
-    result = ReservationService(uow).reserve(order_id, inventory_id, 3)
+    result, created = ReservationService(uow).reserve(order_id, inventory_id, 3)
+    assert created
+    replay, created = ReservationService(uow).reserve(order_id, inventory_id, 3)
+    assert not created and replay == result
     assert result.quantity == 3 and uow.quantity == 2
     with pytest.raises(DuplicateReservation):
         ReservationService(uow).reserve(order_id, inventory_id, 1)
@@ -83,4 +88,15 @@ def test_missing_inventory_and_failed_commit_leave_state_unchanged():
     uow.fail_commit = True
     with pytest.raises(RuntimeError, match="commit failure"):
         ReservationService(uow).reserve(uuid4(), inventory_id, 2)
+    assert uow.quantity == 5 and uow.records == {}
+
+
+def test_unrecoverable_conflict_does_not_return_success():
+    class UnrecoverableUnitOfWork(MemoryUnitOfWork):
+        def try_create_reservation(self, *args):
+            return None
+
+    uow = UnrecoverableUnitOfWork()
+    with pytest.raises(RuntimeError, match="could not be retrieved"):
+        ReservationService(uow).reserve(uuid4(), uuid4(), 1)
     assert uow.quantity == 5 and uow.records == {}

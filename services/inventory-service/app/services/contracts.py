@@ -11,10 +11,12 @@ class InventoryRepository(Protocol):
 
 
 class ReservationRepository(Protocol):
-    def has_reservation(self, order_id: UUID, inventory_id: UUID) -> bool: ...
-    def create_reservation(
+    def get_by_pair(
+        self, order_id: UUID, inventory_id: UUID
+    ) -> ReservationResponse | None: ...
+    def try_create_reservation(
         self, order_id: UUID, inventory_id: UUID, quantity: int, status: str
-    ) -> ReservationResponse: ...
+    ) -> ReservationResponse | None: ...
 
 
 class InventoryUnitOfWork(Protocol):

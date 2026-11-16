@@ -33,15 +33,19 @@ La operación MUST responder 404 sin crear reservas si el identificador de inven
 - **THEN** la respuesta es 404 y no se persiste ninguna reserva
 
 ### Requirement: Conflictos de reserva
-La operación MUST responder 409 sin nuevas escrituras cuando falte stock o ya exista una reserva del mismo par pedido/inventario, independientemente de su estado. Repetir una solicitud MUST rechazarse sin devolverla como creación exitosa ni descontar stock nuevamente.
+La operación MUST responder 409 sin nuevas escrituras si una reserva nueva no tiene stock suficiente o si la misma clave de negocio ya existe con cantidad distinta o estado diferente de `RESERVED`. La clave existente MUST resolverse antes de evaluar stock para una creación nueva y nunca reactivarse.
 
 #### Scenario: Stock insuficiente
-- **WHEN** se solicitan más unidades de las disponibles, incluido inventario con stock cero
+- **WHEN** se solicitan más unidades de las disponibles para una clave nueva, incluido inventario con stock cero
 - **THEN** la respuesta es 409 y stock y reservas permanecen intactos
 
 #### Scenario: Reserva duplicada
-- **WHEN** se repite un par pedido/inventario previamente reservado, con la misma u otra cantidad
-- **THEN** la respuesta es 409 y no se crea otra reserva ni se vuelve a descontar stock
+- **WHEN** se repite un par pedido/inventario previamente reservado con otra cantidad
+- **THEN** la respuesta es 409 y no se crea otra reserva ni se vuelve a descontar stock, aun si el inventario está agotado
+
+#### Scenario: Reserva en otro estado
+- **WHEN** existe una reserva del mismo par en estado `RELEASED` o `CONFIRMED`, con igual o distinta cantidad
+- **THEN** la respuesta es 409, la reserva no se reactiva y no se modifica stock ni timestamps
 
 ### Requirement: Atomicidad de reserva y stock
 La creación de reserva y el descuento MUST confirmarse en una única transacción. Ante cualquier fallo de esa transacción, ambas escrituras MUST revertirse por completo. Los errores inesperados MUST producir una respuesta de servidor fallida sin exponer detalles de PostgreSQL.
@@ -52,7 +56,7 @@ La creación de reserva y el descuento MUST confirmarse en una única transacci�
 - **AND** no se devuelve HTTP 201
 
 ### Requirement: Stock consistente ante solicitudes simultáneas
-Las solicitudes concurrentes MUST respetar la disponibilidad actualizada sin producir stock negativo ni descuentos por reservas rechazadas, manteniendo una única reserva por par pedido/inventario.
+Las solicitudes concurrentes MUST respetar la disponibilidad actualizada sin producir stock negativo ni descuentos por reservas rechazadas o recuperadas, manteniendo una única reserva por par pedido/inventario.
 
 #### Scenario: Dos pedidos compiten por stock limitado
 - **WHEN** dos solicitudes de pedidos diferentes compiten por la última unidad del mismo inventario
@@ -60,6 +64,18 @@ Las solicitudes concurrentes MUST respetar la disponibilidad actualizada sin pro
 - **AND** queda una reserva nueva y stock cero
 
 #### Scenario: Dos solicitudes del mismo par
-- **WHEN** dos solicitudes simultáneas repiten el mismo pedido/inventario con stock suficiente
-- **THEN** una responde 201 y la otra 409
+- **WHEN** dos solicitudes simultáneas repiten el mismo pedido/inventario y cantidad con stock suficiente para una reserva
+- **THEN** una responde 201 y la otra 200 con la misma reserva
 - **AND** se persiste una reserva y se descuenta su cantidad una sola vez
+
+### Requirement: Reintentos idempotentes por clave de negocio
+El par (`order_id`, `inventory_id`) MUST identificar una reserva única. Una solicitud válida posterior con la misma clave, igual cantidad y reserva en estado `RESERVED` MUST devolver HTTP 200 con la reserva original, conservando todos sus campos y el inventario sin escrituras adicionales.
+
+#### Scenario: Reintento idéntico
+- **WHEN** se repite una reserva creada previamente con igual clave y cantidad
+- **THEN** la primera respuesta es 201 y la posterior es 200 con el mismo id, cantidad, estado y timestamps
+- **AND** una sesión independiente observa una sola reserva y un único descuento de stock
+
+#### Scenario: Reintento con stock agotado
+- **WHEN** una reserva dejó el stock en cero o por debajo de la cantidad solicitada y se repite idénticamente
+- **THEN** se devuelve 200 con la reserva original sin volver a evaluar suficiencia para crearla ni descontar stock
